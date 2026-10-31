@@ -34,10 +34,10 @@
 
 ## 検証結果（現在のクラウド開発マシン）
 
-- Python 3.12。既存13件＋追加のオフライン回帰テスト。認証ヘッダー、ページング、429 retry、401 redaction、redirect拒否、繰返しcursor、重複・改訂、rollback、再開、プラン窓、ロック、スケジュール、SQL入力、移行、バックアップ、JWT、未認証拒否、所有者権限、本文・rate制限、OAuth metadata、HTTP MCPツールを検証。
+- Python 3.12の空の仮想環境で全36件通過（既存13件＋追加23件）。認証ヘッダー、ページング、429 retry、401 redaction、redirect拒否、繰返しcursor、重複・改訂、rollback、再開、プラン窓、ロック、スケジュール、SQL入力、移行、バックアップ、JWT、未認証拒否、所有者権限、本文・rate制限、OAuth metadata、HTTP MCPツールを検証。
 - 実stdioサブプロセスでinitialize、tools/list、database_statusを呼び出す。HTTPは署名付きテストJWTとASGIクライアントを使用。実IdPのJWTは未使用。
 - Dockerを実ビルドし、専用の使い捨てVolumeで実コンテナのhealthz=200、未認証MCP=401、再起動後のSQLite保持を確認。非rootプロセスのソース読み取り権限、同一device上のDocker bind mount検出の起動不具合を修正。
-- CIはAPIキー不要。GitHub Actionsでは同じハッシュ固定依存・unittest・compileall・Dockerビルドを実行する。GitHub上の結果はPR/Actions画面で確認する。ローカル通過をリモートCI通過と同一視しない。
+- CIはAPIキー不要。GitHub Actionsでは同じハッシュ固定依存・unittest・compileall・Dockerビルドを実行する。GitHub上の結果はPR/Actions画面で確認する。ローカル通過をリモートCI通過と同一視しない。GitHubへのブランチpushは成功したが、この開発環境からapi.github.comへのアクセスがForbiddenのため、PR作成とGitHub上のCI結果取得は未完了。
 - 本番DBは作成していない。テストの架空データはTemporaryDirectoryまたは専用smoke Volumeだけで使用。
 
 ## 未検証・本人操作が必要な項目
