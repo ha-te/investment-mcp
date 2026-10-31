@@ -34,7 +34,7 @@
 
 ## 検証結果（現在のクラウド開発マシン）
 
-- Python 3.12の空の仮想環境で全36件通過（既存13件＋追加23件）。認証ヘッダー、ページング、429 retry、401 redaction、redirect拒否、繰返しcursor、重複・改訂、rollback、再開、プラン窓、ロック、スケジュール、SQL入力、移行、バックアップ、JWT、未認証拒否、所有者権限、本文・rate制限、OAuth metadata、HTTP MCPツールを検証。
+- Python 3.12で既存テストと追加の回帰テストを実行。最新の無料版検証件数は末尾を参照。認証ヘッダー、ページング、429 retry、401 redaction、redirect拒否、繰返しcursor、重複・改訂、rollback、再開、プラン窓、ロック、スケジュール、SQL入力、移行、バックアップ、JWT、未認証拒否、所有者権限、本文・rate制限、OAuth metadata、HTTP MCPツールを検証。
 - 実stdioサブプロセスでinitialize、tools/list、database_statusを呼び出す。HTTPは署名付きテストJWTとASGIクライアントを使用。実IdPのJWTは未使用。
 - Dockerを実ビルドし、専用の使い捨てVolumeで実コンテナのhealthz=200、未認証MCP=401、再起動後のSQLite保持を確認。非rootプロセスのソース読み取り権限、同一device上のDocker bind mount検出の起動不具合を修正。
 - CIはAPIキー不要。GitHub Actionsでは同じハッシュ固定依存・unittest・compileall・Dockerビルドを実行する。GitHub上の結果はPR/Actions画面で確認する。ローカル通過をリモートCI通過と同一視しない。GitHubへのブランチpushは成功したが、この開発環境からapi.github.comへのアクセスがForbiddenのため、PR作成とGitHub上のCI結果取得は未完了。
@@ -42,13 +42,25 @@
 
 ## 未検証・本人操作が必要な項目
 
-1. **P0**：無料構成の方式確定、カードなしFreeの外部OAuth登録、Secrets登録、HTTPSデプロイ。ChatGPTと実IdPの認可フロー・scope/audience・所有者更新を実機確認する。
+1. **P0**：カードなしFreeのアカウント・外部OAuth登録、Secrets登録、HTTPSデプロイ。ChatGPTと実IdPの認可フロー・scope/audience・所有者更新を実機確認する。
 2. **P0**：J-Quantsの契約プラン・v2利用可能APIと期間を公式契約画面で確認し、実APIの各1日分を取込検証する。キー未提供のためライブ認証・契約別制限は未検証。ネットワーク制限により公式Webの最新プラン表も未取得。
 3. **P0（既存DBを移す場合）**：バックアップのコピーで実スキーマと移行を検証する。同梱テスト以上の元DB構造は未確認。
 4. **P1**：独立バックアップ先と自動転送、実クラウド復旧訓練。Volume内バックアップやsnapshotだけでは十分な独立性はない。
 5. **P1**：長期の価格調整・古い財務訂正の再走査頻度を本人の契約・利用目的に合わせる。日次更新は直近7暦日。
-6. **P2**：実データ量に応じて512MB→1GB、Volumeサイズを見直す。単一Machineの停止許容がなくなれば冗長化を別途実装する。
+6. **P2**：無料枠内に収まるよう監視銘柄・保持期間・更新回数を見直す。有料リソースへの変更はしない。
 
-## 予算条件の変更
+## 無料版（最新の構成）
 
-ユーザーの追加条件は無料・カード登録なし優先。Fly.ioの設定とデプロイworkflowを削除し、有料デプロイ手順を撤去した。Cloudflare Workers Free + D1 Freeが候補だが、SQLiteファイル方式からの変更確認と無料版バックエンドの実装は未完了。上記のDocker・Pythonテスト結果は従来のPython/SQLite実装を検証したものであり、Workers/D1での動作を証明しない。詳細はFREE_HOSTING.md。
+予算条件は0円・カードなし。D1への方式変更はユーザー確認済み。有料Fly設定とdeploy workflowは削除した。新しい公開MCPは `free_worker/` の公式TypeScript MCP SDK + Workers Free/D1 Free。API・検証・履歴・再開の中核はPythonを再利用する。
+
+`free_sync.py` が同期用の所有者資格情報でD1リースを取得し、現在のデータを一時SQLiteに復元する。`sync.py` の日付/API単位の原子的取込と検証の後、主キーごとの変更だけを1回のD1 batchで反映する。チェックポイントも同じbatchに含める。リースは30分、コミットで更新し、期限切れの処理はSQL条件でも拒否する。GitHub側のconcurrencyも併用する。
+
+監視銘柄は1〜50件、1更新7暦日、1原子的反映500変更行・2MiBまで。500行を超える変更を複数リクエストに分けて部分反映しない。無料枠やCPU制限で失敗しても有料プランへ変更しない。全銘柄の無制限保存ではない。実クラウドのCPU・容量・アカウント契約は未検証。
+
+新たな検証：PythonからD1互換の実SQLiteへ、スナップショット復元・差分取込・watchlist絞込・再実行・財務異常時rollback・再開を確認する。Workerは本物のローカルWorkers/D1エミュレーターで、署名付きJWT、issuer/audience/scope、所有者権限、リース排他、D1 batch rollback、入力制限、MCP initialize/list、株価・財務・指標の呼び出しを検証する。PythonとWorkerのスキーマ互換もテストする。
+
+GitHubのCIと同期は、本人が無料枠・残量・支出上限0を確認して `FREE_CI_ENABLED` / `FREE_SYNC_ENABLED` をtrueにするまで実行しない。skippedはテスト通過ではない。CI・同期でDB artifactは作らない。公開範囲は変更しない。
+
+最優先の残作業は、本人によるカードなしFreeアカウント・OAuth・J-Quants無料APIの確認、Secrets登録、実デプロイとChatGPT接続。無料で利用できない外部機能を有料契約で補わない。具体的手順はDEPLOYMENT.md、上限と費用方針はFREE_HOSTING.md。
+
+最新のローカル検証：Python 42件、Workers/D1 6件が通過。ロック固定からの再インストールとdry-run bundle作成も確認済み。互換用Dockerのビルド・非root起動・認証拒否・再起動永続化も通過。外部デプロイとリモートCIの通過は未確認。

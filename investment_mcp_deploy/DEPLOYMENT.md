@@ -1,38 +1,106 @@
-# 無料運用への移行と接続手順
+# 無料版のセットアップ・ChatGPT接続
 
-**予算は0円・カード登録なしを優先する。** 有料のFly.ioデプロイ設定とworkflowは削除した。外部サービスの契約・デプロイ・課金設定は一切実行していない。
+費用方針と上限は [FREE_HOSTING.md](FREE_HOSTING.md)。以下は**本人がカードなしFreeを確認した後だけ**実行する。有料プランへの変更やカード登録が必要になったら進めない。まだ実クラウドへデプロイしていない。
 
-現行Pythonサーバーはローカル／Dockerで動作確認済みだが、無料クラウドへのデプロイは未完了。無料候補と制限は [FREE_HOSTING.md](FREE_HOSTING.md) を参照。Cloudflare Workers Free + D1 Freeへ変更する場合は、当初のSQLiteファイル方式からの変更と、D1/MCP接続部分の実装・再検証が必要になる。
+## 1. ローカル検証
 
-以下は現行実装のMCP・OAuth仕様であり、無料版のクラウド接続が既に使えることを意味しない。URLの `YOUR-APP` は、採用した無料サービスのHTTPS URLへ置き換える。独自ドメイン購入は不要。
+リポジトリの実装ブランチで、Node 24とPython 3.12を使う。
 
-## OAuthの設定条件
+```sh
+cd free_worker
+npm ci --no-audit --no-fund
+npm test
+cd ../investment_mcp_deploy
+python -m pip install --require-hashes -r requirements.lock
+python -m unittest discover -v
+```
 
-外部OAuth認可サーバーはカード登録なしのFree契約だけを使う。無料条件を登録画面で確認できるまでは登録しない。API Identifierは実際のMCP URL、署名RS256、scopeは `investment:read` と `investment:update`。Authorization Code + PKCE S256、HTTPS discovery/JWKSが必要。callback URLはChatGPTの接続画面に表示された実値を事前登録する。
+Workerのbuildは`wrangler deploy --dry-run`であり公開しない。テストの価格・財務・JWTは使い捨てのローカルDB／エミュレーターだけに入る。
 
-`OAUTH_ISSUER`は実際のissuer、`MCP_RESOURCE_URL`は実際のAPI audienceと完全一致させる。`INVESTMENT_OWNER_SUB`は所有者のsubject。ID tokenをアクセストークン代わりに使わない。認可サーバーで `resource` とaudienceの対応を確認し、MCPクライアントが送るresourceが自動でaudienceになると仮定しない。不要なユーザー登録と他人へのアクセスを無効化する。
+## 2. FreeのD1とHTTPS Worker
 
-## 3. 起動・機能確認
+CloudflareのWorkers Freeアカウントを本人が作成する。カードや支払方法を登録しない。`free_worker/`で次を実行する。
 
-`GET /healthz`は認証不要でDB readinessのみを返す（行数や秘密は返さない）。`POST /mcp`はBearer access tokenがない場合401、read scope不足は403。OAuth Protected Resource Metadataは `/.well-known/oauth-protected-resource/mcp`。
+```sh
+npx wrangler login
+npx wrangler d1 create investment-free
+```
 
-本番で最初に `database_status` と `search_instruments` を呼ぶ。空DBでは0件が正常。**テストデータを本番に投入しない。** 所有者トークンで`run_update`（開始・終了ISO日付、最大31日）を呼び、返されたjob IDを`update_job_status`で確認する。初回は契約範囲内の1日で確認する。履歴は期間を分割して取得する。
+返された非秘密の`database_id`を`wrangler.jsonc`に設定する。既存DBを勝手に指定せず、専用の空D1を使う。テンプレートの`REPLACE_WITH_FREE_D1_DATABASE_ID`のままではデプロイしない。
 
-読み取りMCPツール：`search_instruments`、`lookup_price`、`financial_information`、`technical_indicators`、`database_status`。
-所有者専用：`run_update`、`update_job_status`。
-CSVファイル読み取りや任意SQLをリモートに公開しない。
+```sh
+npx wrangler d1 migrations apply investment-free --remote
+```
 
-## 4. ChatGPT接続
+`migrations/0001_investment.sql`は既存Pythonの追加型スキーマと互換。D1は永続保存先で、Actionsの一時ファイル領域を永続DBとして使わない。既存の実SQLiteファイルをD1へ自動移行する機能は含まない。実DBがある場合は元DBを残し、バックアップのコピーでスキーマとインポート手順を個別確認する。
 
-ChatGPTのアプリ／コネクタのカスタムMCP接続機能で、URL `https://YOUR-FREE-HOST/mcp` とOAuth認証を指定する。必要なclient ID/secretは接続設定画面で入力する。認可画面で自分のアカウントを確認して接続する。
+## 3. 無料OAuthとシークレット
 
-最初に「登録銘柄を検索して」「DBの更新状況を教えて」で読み取りを検証し、その後に所有者として小さな更新を試す。ChatGPT側のUI名、利用可否、事前登録clientの指定可否はプランに依存するため実アカウントでの確認が必要。この実装作業では実際のChatGPT OAuth接続を検証していない。
+カードなしの無料OAuth/OIDCプロバイダーを本人が登録する。Auth0は候補の一つだが、必要機能と無料条件を登録時に確認する。必要条件：HTTPSのOIDC discoveryとJWKS、RS256 access token、Authorization Code + PKCE S256。callback URLはChatGPTの接続画面に表示された値をそのまま登録する。ユーザー登録・アプリ利用は本人に限定する。現行のJWKS取得先はissuer末尾の `/.well-known/jwks.json`（Auth0互換）なので、異なるJWKS URLのプロバイダーは追加対応が必要。
 
+API Identifier/audienceを最終URL `https://investment-mcp-free.YOUR-SUBDOMAIN.workers.dev/mcp` にする。scopeは `investment:read` と `investment:update`。issuerは実際の`iss`と末尾`/`を含めて完全一致させる。ID tokenでAPIへアクセスしない。Auth0ならDefault Audience等でresourceとaudienceの対応を確認し、`resource`パラメーターが自動的にaudienceになると仮定しない。
 
-## 現行実装のセキュリティと更新
+以下はWranglerの対話プロンプトから登録する。値をコマンド引数・チャット・Git・ログに書かない。
 
-未認証のMCPアクセスは拒否し、JWT署名・issuer・audience・有効期限・subject・scopeを検証する。更新には所有者subject一致とupdate scopeの両方が必要。任意のプロキシヘッダーや `INVESTMENT_TRUSTED_AUTH_PROXY` では認証できない。
+```sh
+npx wrangler secret put OAUTH_ISSUER
+npx wrangler secret put MCP_RESOURCE_URL
+npx wrangler secret put INVESTMENT_OWNER_SUB
+npx wrangler secret put SYNC_KEY
+```
 
-現行Pythonの更新はAPI/日付単位のトランザクションとOSロックを使う。無料サーバーレス環境では、このロック・起動・永続化の仕組みをそのまま使えないため、クラウド側の実装方式を確定してから再検証する。
+`INVESTMENT_OWNER_SUB`は本人のアクセストークンの`sub`。`SYNC_KEY`はパスワードマネージャー等で生成した32〜128文字のランダム値で、後述のGitHub Secretと同じ値にする。同期用の所有者資格情報なので読み取りユーザーに渡さない。JWT認証を代替するプロキシフラグはない。
 
-J-Quantsの最新プラン条件は未確認。本人の無料契約で利用可能なAPIと期間のみを使い、利用できない機能は理由付きでスキップする。追加料金の発生する契約はしない。既存DBを移す際は `maintenance.py backup` でコピーを作り、コピー上でスキーマ互換と整合性を確認する。元DBを削除・上書きしない。
+本人がWorkers Freeを確認済みなら公開する。
+
+```sh
+npx wrangler deploy
+```
+
+標準のworkers.dev URLを使い、ドメインは購入しない。`GET /healthz`で200、未認証の`POST /mcp`で401を確認する。
+
+## 4. GitHub無料枠内の更新
+
+先に変更ブランチを確認し、検証後にmainへマージする。GitHubのscheduleとworkflow_dispatchにはdefault branch上のworkflowが必要。リポジトリの公開範囲は変えない。
+
+GitHub Repository SettingsのSecrets and variablesで設定する。
+
+| 種別 | 名前 | 内容 |
+|---|---|---|
+| Secret | `JQUANTS_API_KEY` | 本人の無料契約で使えるv2キー |
+| Secret | `SYNC_KEY` | Workerに登録した同期専用キー |
+| Variable | `FREE_MCP_ORIGIN` | `https://investment-mcp-free.YOUR-SUBDOMAIN.workers.dev`（`/mcp`なし） |
+| Variable | `INVESTMENT_SYMBOLS` | 本人の監視銘柄をカンマ区切りで1〜50件。最初は5〜10件 |
+| Variable | `JQUANTS_DATA_DELAY_DAYS` | 任意。無料契約で確認した最新データの遅延日数。未設定0。プラン条件を推測して指定しない |
+| Variable | `JQUANTS_AVAILABLE_FROM` | 任意。無料契約で確認した最古の日付 |
+| Variable | `JQUANTS_AVAILABLE_THROUGH` | 任意。無料契約で確認した最新の日付。固定値なので更新が必要 |
+| Variable | `FREE_SYNC_ENABLED` | 無料時間・残量と支出上限0を確認後だけ `true` |
+| Variable | `FREE_CI_ENABLED` | 同じ無料枠確認後だけ `true` |
+
+両ENABLE変数は未設定なら実行しない。skippedはテスト通過や同期成功を意味しない。支払方法なし・無料枠だけで動くことを確認できなければ有効化しない。CIや同期はartifactを作らず、一時DBをランナー終了時に破棄する。
+
+更新workflowは平日18:15（日本時間）に無料契約で確認した最新利用可能日までの7暦日を再確認する。GitHubの遅延・無料枠枯渇・スケジュール無効化で停止する可能性がある。Actions画面で更新履歴を確認する。APIは既定12.2秒間隔・最大5試行、429/一時的5xxをretryする。GitHub concurrencyとD1の30分リースの両方で二重起動を防ぐ。期限切れリースの処理は書き込めない。
+
+D1の現在値を一時SQLiteへ読み戻し、既存Python処理でAPIの各日付を全件検証してから差分だけをD1へ反映する。異常データは同じ単位全体をrollback。500行を超える差分は書く前に停止。完了チェックポイントはデータと同じD1 batch内で保存する。途中で止まっても次回は完了単位をスキップできる。財務訂正・株価改訂は履歴を残す。
+
+無料期間外は理由付きでskipped、403はプラン／権限未確認として記録し、401はfailed。skippedがある更新はpartialとなる。これらを解決するための有料契約は行わない。
+
+## 5. 所有者による即時更新（任意）
+
+追加の資格情報を持たせたくなければこの節は省略できる。MCPの更新ツールはD1へqueuedジョブを保存し、次の無料スケジュールまたは本人の手動workflow実行が拾う。
+
+即時にGitHub workflowを起動したい場合のみ、本人が対象repoだけのActions write権限を持つfine-grained tokenを作り、Workerへ`GITHUB_DISPATCH_TOKEN`として対話登録する。`GITHUB_REPOSITORY`は`ha-te/investment-mcp`、`GITHUB_REF`は通常`main`としてWorkerのVariablesに設定する。GitHub APIのリダイレクトにはトークンを転送しない。ディスパッチ失敗時もジョブはqueuedとして残る。
+
+## 6. ChatGPT接続
+
+本人の**現在のプラン**でカスタムMCPとOAuthが利用できるか確認する。追加料金が必要なら契約しない。接続できる場合、URLを `https://investment-mcp-free.YOUR-SUBDOMAIN.workers.dev/mcp`、認証をOAuthにする。事前登録したclient ID/secretを接続画面で指定する方式を使う。Dynamic Client Registrationを提供しないIdPを使う場合は、その手動登録方式がChatGPT画面で使えることが前提。
+
+読み取りは`investment:read`、更新する本人だけは`investment:update`も発行する。最初に`database_status`と`search_instruments`を呼び、次に所有者の`run_update`で無料契約範囲内の1日だけを検証する。`update_job_status`で結果を確認する。無料版は1回最大7暦日。
+
+ツールは銘柄検索、株価、財務訂正履歴、調整終値SMA/Cutler RSI、DB統計、所有者更新、所有者ジョブ照会の7つ。任意SQLやサーバーファイル読み取りは公開しない。
+
+## 7. 運用と残る検証
+
+実CloudflareのFree CPU・D1行数、実IdPの認可フロー、J-Quants無料API、ChatGPTからの呼び出しは未検証。ローカルエミュレーターの成功をこれらの成功とは扱わない。
+
+D1 FreeのTime Travelは7日。重要な実データの退避は本人の安全な保存先へ行う。GitHub artifactやGitへ実DBをアップロードしない。保存容量が増えたらバックアップ後に保持範囲を見直す。枯渇時に有料プランへ変更しない。

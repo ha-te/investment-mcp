@@ -1,0 +1,8 @@
+# Local development only: real values go in Wrangler/GitHub secret prompts.
+OAUTH_ISSUER=https://YOUR-FREE-IDP/
+MCP_RESOURCE_URL=https://investment-mcp-free.YOUR-SUBDOMAIN.workers.dev/mcp
+INVESTMENT_OWNER_SUB=YOUR-OWNER-SUBJECT
+# SYNC_KEY: random 32-128 characters, identical Worker and GitHub Actions secret.
+# GITHUB_DISPATCH_TOKEN: optional fine-grained token with Actions write only.
+GITHUB_REPOSITORY=ha-te/investment-mcp
+GITHUB_REF=main

@@ -1,0 +1,209 @@
+{
+  "instruments": {
+    "columns": [
+      "id",
+      "ticker",
+      "exchange",
+      "country"
+    ],
+    "primary": [
+      "id"
+    ]
+  },
+  "sources": {
+    "columns": [
+      "id",
+      "publisher",
+      "url",
+      "source_type",
+      "license_notes",
+      "retrieved_at"
+    ],
+    "primary": [
+      "id"
+    ]
+  },
+  "prices": {
+    "columns": [
+      "instrument_id",
+      "traded_on",
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume",
+      "adj_close",
+      "available_at",
+      "provider_source_id"
+    ],
+    "primary": [
+      "instrument_id",
+      "traded_on"
+    ]
+  },
+  "financial_facts": {
+    "columns": [
+      "id"
+    ],
+    "primary": [
+      "id"
+    ]
+  },
+  "investment_schema_versions": {
+    "columns": [
+      "version",
+      "applied_at"
+    ],
+    "primary": [
+      "version"
+    ]
+  },
+  "jq_instrument_snapshots": {
+    "columns": [
+      "instrument_id",
+      "effective_on",
+      "name",
+      "sector",
+      "market",
+      "raw_json",
+      "sha256",
+      "fetched_at",
+      "source_id"
+    ],
+    "primary": [
+      "instrument_id",
+      "effective_on",
+      "sha256"
+    ]
+  },
+  "jq_financial_disclosures": {
+    "columns": [
+      "id",
+      "instrument_id",
+      "disclosure_number",
+      "disclosed_at",
+      "period_end",
+      "document_type",
+      "raw_json",
+      "sha256",
+      "fetched_at",
+      "source_id"
+    ],
+    "primary": [
+      "id"
+    ]
+  },
+  "jq_price_revisions": {
+    "columns": [
+      "id",
+      "instrument_id",
+      "traded_on",
+      "raw_json",
+      "sha256",
+      "fetched_at",
+      "source_id"
+    ],
+    "primary": [
+      "id"
+    ]
+  },
+  "investment_sync_units": {
+    "columns": [
+      "endpoint",
+      "day",
+      "status",
+      "reason",
+      "rows_received",
+      "rows_saved",
+      "finished_at"
+    ],
+    "primary": [
+      "endpoint",
+      "day"
+    ]
+  },
+  "investment_import_runs": {
+    "columns": [
+      "id",
+      "endpoint",
+      "day",
+      "status",
+      "rows_received",
+      "rows_saved",
+      "reason",
+      "recorded_at"
+    ],
+    "primary": [
+      "id"
+    ]
+  },
+  "investment_jobs": {
+    "columns": [
+      "id",
+      "requested_by",
+      "start_date",
+      "end_date",
+      "status",
+      "result_json",
+      "created_at",
+      "finished_at"
+    ],
+    "primary": [
+      "id"
+    ]
+  },
+  "investment_relationships": {
+    "columns": [
+      "id",
+      "from_instrument_id",
+      "to_instrument_id",
+      "kind",
+      "source_id",
+      "observed_on",
+      "details_json"
+    ],
+    "primary": [
+      "id"
+    ]
+  },
+  "investment_events": {
+    "columns": [
+      "id",
+      "instrument_id",
+      "occurred_at",
+      "kind",
+      "description",
+      "source_id"
+    ],
+    "primary": [
+      "id"
+    ]
+  },
+  "investment_event_impacts": {
+    "columns": [
+      "event_id",
+      "instrument_id",
+      "hypothesis",
+      "evidence_source_id"
+    ],
+    "primary": [
+      "event_id",
+      "instrument_id",
+      "evidence_source_id"
+    ]
+  },
+  "investment_indicators": {
+    "columns": [
+      "instrument_id",
+      "traded_on",
+      "method",
+      "value",
+      "computed_at"
+    ],
+    "primary": [
+      "instrument_id",
+      "traded_on",
+      "method"
+    ]
+  }
+}

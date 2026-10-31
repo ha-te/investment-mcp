@@ -92,7 +92,7 @@ def record(c,endpoint,day,status,received=0,saved=0,reason=None):
     c.execute('INSERT INTO investment_import_runs(endpoint,day,status,rows_received,rows_saved,reason) VALUES(?,?,?,?,?,?)',(endpoint,day,status,received,saved,reason))
 
 
-def sync_range(start,end,path,client=None,force=False):
+def sync_range(start,end,path,client=None,force=False,on_unit=None):
     first,last=date.fromisoformat(db.day(start)),date.fromisoformat(db.day(end))
     if last<first or (last-first).days>30:raise ValueError('Choose at most 31 calendar days')
     db.migrate(path)
@@ -120,6 +120,7 @@ def sync_range(start,end,path,client=None,force=False):
                 rows=client.get(endpoint,{'date':day})
                 results.append(ingest(endpoint,day,rows,path))
                 if endpoint=='/equities/bars/daily':db.persist_indicators(path,day)
+                if on_unit is not None:on_unit()
             except APIError as exc:
                 # 403 alone cannot distinguish plan restrictions from account denial.
                 # Record the actual evidence; never mislabel auth failures as success.
