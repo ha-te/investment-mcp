@@ -3,6 +3,7 @@ Run: pip install -r requirements.txt && python server.py
 """
 from __future__ import annotations
 import csv, hashlib, io, json, os, sqlite3, time, urllib.parse, urllib.request
+import math
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,8 @@ def connection():
 
 
 def init():
+    from database import migrate
+    migrate(DB)
     with connection() as c:
         c.executescript('''
         CREATE TABLE IF NOT EXISTS mcp_import_runs (
@@ -72,7 +75,7 @@ def ingest_price_csv(csv_text: str, source_url='manual:csv', dry_run=False)->dic
             o,h,l,cl=[float(row[x]) for x in ('open','high','low','close')]
             vol=float(row['volume'])
             adj=float(row['adj_close']) if row.get('adj_close') else None
-            if not (ticker and l>0 and l<=min(o,cl)<=max(o,cl)<=h and vol>=0 and (adj is None or adj>0)):
+            if not (all(math.isfinite(v) for v in (o,h,l,cl,vol)) and ticker and l>0 and l<=min(o,cl)<=max(o,cl)<=h and vol>=0 and (adj is None or adj>0)):
                 raise ValueError(f'Invalid OHLCV at line {line}')
             iid=instrument_id(c,ticker)
             if iid is None: missing.add(ticker); continue
@@ -142,36 +145,8 @@ def status()->dict:
 
 
 def register_mcp():
-    try: from mcp.server.fastmcp import FastMCP
-    except ImportError as exc: raise SystemExit('Install MCP SDK: pip install -r requirements.txt') from exc
-    mcp=FastMCP('investment-data')
-    @mcp.tool()
-    def database_status()->dict:
-        """Show database row counts and whether live data has been ingested."""
-        return status()
-    @mcp.tool()
-    def import_prices_csv_file(path:str,dry_run:bool=True)->dict:
-        """Import a user-owned CSV on the MCP server host. First run with dry_run=true."""
-        return import_local_csv(path,dry_run)
-    @mcp.tool()
-    def public_sec_financials(cik:str,ticker:str,dry_run:bool=True)->dict:
-        """Fetch public SEC XBRL company facts (US companies). Set INVESTMENT_USER_AGENT."""
-        return fetch_sec_companyfacts(cik,ticker,dry_run)
-    @mcp.tool()
-    def jquants_sync_prices(start_date:str,end_date:str,dry_run:bool=True)->dict:
-        """Fetch J-Quants V2 daily prices for up to 30 calendar days. Default preview only; server must have JQUANTS_API_KEY configured."""
-        from jquants import sync_range
-        return sync_range(start_date,end_date,str(DB),dry_run=dry_run)
-    @mcp.tool()
-    def lookup_price(ticker:str,limit:int=10)->list[dict]:
-        """Read stored Japanese daily prices, no external API required."""
-        with connection() as c:
-            c.row_factory=sqlite3.Row
-            rows=c.execute('''SELECT p.traded_on,p.open,p.high,p.low,p.close,p.volume,p.available_at
-              FROM prices p JOIN instruments i ON i.id=p.instrument_id WHERE i.ticker=? ORDER BY p.traded_on DESC LIMIT ?''',
-              (ticker.upper(),max(1,min(limit,250)))).fetchall()
-            return [dict(r) for r in rows]
-    return mcp
+    from app import create_mcp
+    return create_mcp(path=DB)
 
 if __name__=='__main__':
     import sys

@@ -3,10 +3,22 @@ Official endpoint: https://api.jquants.com/v2/equities/bars/daily
 """
 from __future__ import annotations
 import json, os, sqlite3, time, urllib.error, urllib.parse, urllib.request
+import math, random, threading
+from email.utils import parsedate_to_datetime
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 BASE='https://api.jquants.com/v2'
+
+class APIError(RuntimeError):
+    def __init__(self, status):
+        self.status=status
+        super().__init__(f'J-Quants HTTP {status}')
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise APIError(code)
+
 
 def key():
     value=os.environ.get('JQUANTS_API_KEY','').strip()
@@ -14,16 +26,21 @@ def key():
     return value
 
 class Client:
-    def __init__(self, api_key=None, interval=12.2, opener=None, sleeper=time.sleep):
+    def __init__(self, api_key=None, interval=None, opener=None, sleeper=time.sleep):
         self.api_key=api_key or key()
-        self.interval=interval
-        self.opener=opener or urllib.request.urlopen
+        self.interval=float(os.getenv('JQUANTS_INTERVAL_SECONDS','12.2')) if interval is None else interval
+        if not math.isfinite(self.interval) or self.interval < 0: raise ValueError('Invalid request interval')
+        self.lock=threading.Lock()
+        self.opener=opener or urllib.request.build_opener(NoRedirect()).open
         self.sleep=sleeper
         self.last_call=None
     def get(self, endpoint, params):
+        with self.lock:
+            return self._get(endpoint, params)
+    def _get(self, endpoint, params):
         if endpoint not in ('/equities/bars/daily','/equities/master','/fins/summary'):
             raise ValueError('Unapproved API endpoint')
-        output=[]; cursor=None; visited=set()
+        output=[]; cursor=None; visited=set(); total_bytes=0
         for _ in range(200):
             q={k:v for k,v in params.items() if v is not None}
             if cursor: q['pagination_key']=cursor
@@ -42,18 +59,23 @@ class Client:
                     if not isinstance(obj,dict) or not isinstance(obj.get('data'),list):raise ValueError('Unexpected J-Quants response shape')
                     break
                 except urllib.error.HTTPError as e:
-                    if e.code in (401,403):raise RuntimeError(f'J-Quants rejected authorization (HTTP {e.code}); check subscription and API key') from None
-                    if e.code not in (429,500,502,503,504) or attempt==4:raise RuntimeError(f'J-Quants HTTP {e.code}') from None
+                    if e.code in (401,403):raise APIError(e.code) from None
+                    if e.code not in (429,500,502,503,504) or attempt==4:raise APIError(e.code) from None
                     retry=e.headers.get('Retry-After','') if e.headers else ''
                     try: delay=min(120,max(1,float(retry)))
-                    except ValueError:delay=min(60,2**attempt*5)
+                    except ValueError:
+                        try: delay=min(120,max(1,parsedate_to_datetime(retry).timestamp()-time.time()))
+                        except (ValueError,TypeError,OverflowError): delay=min(60,2**attempt*5)+random.random()
                     self.sleep(delay)
                 except (TimeoutError,urllib.error.URLError):
                     if attempt==4:raise
                     self.sleep(min(60,2**attempt*5))
+            total_bytes+=len(raw)
+            if total_bytes>48_000_000 or len(output)+len(obj['data'])>100_000:raise ValueError('Import unit exceeds memory budget')
             output.extend(obj['data'])
             cursor=obj.get('pagination_key')
             if not cursor:return output
+            if not isinstance(cursor,str) or len(cursor)>4096:raise ValueError('Invalid pagination cursor')
             if cursor in visited:raise ValueError('Repeated pagination cursor')
             visited.add(cursor)
         raise ValueError('Pagination exceeds safety limit')
@@ -87,8 +109,9 @@ def sync_day(day, db_path, client=None, dry_run=True):
             no_trade+=1;continue
         if any(v is None for v in vals):raise ValueError('Partially null OHLCV')
         o,h,l,close,volume=map(float,vals)
-        if not (0<l<=min(o,close)<=max(o,close)<=h and volume>=0):raise ValueError('Invalid OHLCV for '+ticker)
+        if not (all(math.isfinite(v) for v in (o,h,l,close,volume)) and 0<l<=min(o,close)<=max(o,close)<=h and volume>=0):raise ValueError('Invalid OHLCV for '+ticker)
         adj=r.get('AdjC')
+        if adj is not None and (not math.isfinite(float(adj)) or float(adj)<=0):raise ValueError('Invalid adjusted close')
         parsed.append((ticker,day,o,h,l,close,volume,float(adj) if adj is not None else None))
     with sqlite3.connect(db_path) as c:
         c.execute('PRAGMA foreign_keys=ON')
@@ -111,15 +134,18 @@ def sync_day(day, db_path, client=None, dry_run=True):
         sid=c.execute('SELECT id FROM sources WHERE url=?',(url,)).fetchone()[0]
         before=c.total_changes
         c.executemany('''INSERT OR IGNORE INTO prices(instrument_id,traded_on,open,high,low,close,volume,adj_close,available_at,provider_source_id)
-          VALUES (?,?,?,?,?,?,?,?,?,?)''',[(ids[t],d,o,h,l,cl,v,a,d+'T23:59:59+09:00',sid) for t,d,o,h,l,cl,v,a in parsed])
+          VALUES (?,?,?,?,?,?,?,?,?,?)''',[(ids[t],d,o,h,l,cl,v,a,datetime.now(timezone.utc).isoformat(),sid) for t,d,o,h,l,cl,v,a in parsed])
         saved=c.total_changes-before
         c.execute('INSERT INTO jq_sync_days(traded_on,rows_received,rows_saved,rows_no_trade) VALUES (?,?,?,?) ON CONFLICT(traded_on) DO UPDATE SET rows_received=excluded.rows_received,rows_saved=excluded.rows_saved,rows_no_trade=excluded.rows_no_trade,synced_at=CURRENT_TIMESTAMP',(day,len(rows),saved,no_trade))
         result['saved']=saved
         result['status']='complete'
-        result['warning']='available_at is a conservative placeholder, NOT verified J-Quants publication time. Do not use for strict intraday backtests.'
+        result['warning']='available_at is the observed fetch time, NOT the original publication time.'
         return result
 
 def sync_range(start,end,db_path,client=None,dry_run=True,max_days=30):
+    if not dry_run:
+        from sync import sync_range as production_sync
+        return production_sync(start,end,db_path,client=client)
     first,last=date.fromisoformat(start),date.fromisoformat(end)
     if last<first or (last-first).days>max_days-1:raise ValueError(f'Choose a range of at most {max_days} calendar days')
     client=client or Client()
